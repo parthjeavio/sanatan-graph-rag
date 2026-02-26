@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sanatan Graph RAG Chatbot UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f6fb; color: #222; }
+    .layout { display: grid; grid-template-columns: 360px 1fr 360px; gap: 16px; padding: 16px; }
+    .panel { background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+    h1 { margin: 0 0 12px 0; font-size: 1.3rem; }
+    h2 { margin: 8px 0 10px 0; font-size: 1rem; }
+    textarea, input { width: 100%; box-sizing: border-box; border: 1px solid #d6dbeb; border-radius: 8px; padding: 10px; }
+    textarea { min-height: 220px; resize: vertical; }
+    button { border: 0; border-radius: 8px; background: #4453ff; color: #fff; padding: 9px 12px; cursor: pointer; }
+    button:hover { opacity: .95; }
+    .chat-log { height: 460px; overflow: auto; border: 1px solid #e6e9f6; border-radius: 8px; padding: 8px; background: #fafbff; }
+    .msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; max-width: 90%; }
+    .msg.user { background: #dce4ff; margin-left: auto; }
+    .msg.bot { background: #edf0f7; }
+    .muted { color: #666; font-size: .9rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { border-bottom: 1px solid #eef1fb; padding: 6px; text-align: left; }
+    .metric { display: inline-block; margin-right: 14px; background: #eef2ff; border-radius: 8px; padding: 8px 12px; }
+    ol { padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="panel">
+      <h1>🕉️ Sanatan Graph RAG Chat</h1>
+      <h2>Corpus Input</h2>
+      <p class="muted">Paste mythology text and rebuild graph relationships.</p>
+      <textarea id="corpus"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button onclick="rebuildGraph()">Rebuild Graph</button>
+        <button onclick="downloadGraph()">Download JSON</button>
+      </div>
+      <h2 style="margin-top:16px;">Visualization Plan</h2>
+      <ol>
+        <li><b>Entity Overview</b>: node counts by entity type.</li>
+        <li><b>Relation Distribution</b>: edge counts by relation type.</li>
+        <li><b>Interactive Graph View</b>: force layout with color by type.</li>
+        <li><b>Path Explorer</b>: highlight multi-hop links between entities.</li>
+        <li><b>Source Traceability</b>: open snippets supporting each edge.</li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h2>Chatbot</h2>
+      <p class="muted">Ask: "Who killed the demon that was the brother of Hiranyaksha?"</p>
+      <div class="chat-log" id="chatLog"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input id="chatInput" placeholder="Ask a mythology question..." />
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Graph Snapshot</h2>
+      <div>
+        <span class="metric" id="nodeCount">Nodes: 0</span>
+        <span class="metric" id="edgeCount">Edges: 0</span>
+      </div>
+      <h2>Nodes</h2>
+      <table>
+        <thead><tr><th>ID</th><th>Type</th></tr></thead>
+        <tbody id="nodesTable"></tbody>
+      </table>
+      <h2>Edges</h2>
+      <table>
+        <thead><tr><th>Source</th><th>Relation</th><th>Target</th></tr></thead>
+        <tbody id="edgesTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const ENTITY_TYPES = {
+      Vishnu: 'Deity', Shiva: 'Deity', Saraswati: 'Deity', Rama: 'Avatar', Krishna: 'Avatar', Narasimha: 'Avatar',
+      Ravana: 'Asura/Rakshasa', Hiranyakashipu: 'Asura/Rakshasa', Hiranyaksha: 'Asura/Rakshasa', Kumbhakarna: 'Asura/Rakshasa',
+      Arjuna: 'Human/Warrior', Bhishma: 'Human/Warrior', Durvasa: 'Sage/Rishi', Vishwamitra: 'Sage/Rishi',
+      Brahmastra: 'Astra/Weapon', 'Sudarshana Chakra': 'Astra/Weapon', Gandiva: 'Astra/Weapon', Ayodhya: 'Location', Lanka: 'Location', Kurukshetra: 'Location'
+    };
+
+    const RELATION_PATTERNS = [
+      ['AVATAR_OF', /\b([A-Z][a-z]+)\b\s+(?:is|was)\s+(?:an\s+)?avatar of\s+\b([A-Z][a-z]+)\b/gi],
+      ['CURSED_BY', /\b([A-Z][A-Za-z]+)\b\s+(?:was\s+)?cursed by\s+\b([A-Z][A-Za-z]+)\b/gi],
+      ['KILLED_BY', /\b([A-Z][A-Za-z]+)\b\s+(?:was\s+)?killed by\s+\b([A-Z][A-Za-z]+)\b/gi],
+      ['WIELDS', /\b([A-Z][A-Za-z]+)\b\s+(?:wields?|wielded)\s+\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\b/gi],
+      ['FATHER_OF', /\b([A-Z][A-Za-z]+)\b\s+is\s+the\s+father of\s+\b([A-Z][A-Za-z]+)\b/gi],
+      ['MOTHER_OF', /\b([A-Z][A-Za-z]+)\b\s+is\s+the\s+mother of\s+\b([A-Z][A-Za-z]+)\b/gi],
+      ['MARRIED_TO', /\b([A-Z][A-Za-z]+)\b\s+(?:is|was)\s+married to\s+\b([A-Z][A-Za-z]+)\b/gi],
+      ['SIBLING_OF', /\b([A-Z][A-Za-z]+)\b\s+(?:is|was)\s+(?:the\s+)?(?:brother|sister) of\s+\b([A-Z][A-Za-z]+)\b/gi],
+    ];
+
+    let graph = { nodes: [], edges: [] };
+
+    const defaultCorpus = `Hiranyakashipu was the brother of Hiranyaksha. Hiranyakashipu was killed by Narasimha. Narasimha is an avatar of Vishnu.`;
+
+    function normalizeEntity(name) {
+      return Object.keys(ENTITY_TYPES).find((k) => k.toLowerCase() === name.toLowerCase()) || name;
+    }
+
+    function rebuildGraph() {
+      const text = document.getElementById('corpus').value;
+      const nodeMap = new Map();
+      const edges = [];
+
+      for (const [entity, type] of Object.entries(ENTITY_TYPES)) {
+        if (new RegExp(`\\b${entity.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}\\b`).test(text)) {
+          nodeMap.set(entity, { id: entity, type });
+        }
+      }
+
+      RELATION_PATTERNS.forEach(([relation, pattern]) => {
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+          const source = normalizeEntity(match[1].trim());
+          const target = normalizeEntity(match[2].trim());
+          nodeMap.set(source, { id: source, type: ENTITY_TYPES[source] || 'Unknown' });
+          nodeMap.set(target, { id: target, type: ENTITY_TYPES[target] || 'Unknown' });
+          edges.push({ source, relation, target });
+          if (relation === 'SIBLING_OF' || relation === 'MARRIED_TO') {
+            edges.push({ source: target, relation, target: source });
+          }
+        }
+      });
+
+      graph = { nodes: Array.from(nodeMap.values()), edges };
+      renderGraph();
+      addMessage('bot', 'Graph rebuilt. Ask a question whenever ready.');
+    }
+
+    function answerQuestion(question) {
+      const q = question.toLowerCase();
+      if (!q.includes('who killed') || !q.includes('brother')) {
+        return 'I currently answer graph pattern questions. Try asking: Who killed the demon that was the brother of Hiranyaksha?';
+      }
+
+      const entity = graph.nodes.find((node) => q.includes(node.id.toLowerCase()));
+      if (!entity) {
+        return 'Please include an entity name (for example: Hiranyaksha) in your question.';
+      }
+
+      const siblingEdge = graph.edges.find((e) => e.source === entity.id && e.relation === 'SIBLING_OF');
+      if (!siblingEdge) {
+        return `No sibling relationship found for ${entity.id}.`;
+      }
+
+      const killedByEdge = graph.edges.find((e) => e.source === siblingEdge.target && e.relation === 'KILLED_BY');
+      if (!killedByEdge) {
+        return `Found sibling ${siblingEdge.target}, but no KILLED_BY relation for them.`;
+      }
+
+      const avatarEdge = graph.edges.find((e) => e.source === killedByEdge.target && e.relation === 'AVATAR_OF');
+      if (!avatarEdge) {
+        return `The sibling demon is ${siblingEdge.target}, and they were killed by ${killedByEdge.target}.`;
+      }
+
+      return `The sibling demon is ${siblingEdge.target}. ${siblingEdge.target} was killed by ${killedByEdge.target}, who is an avatar of ${avatarEdge.target}.`;
+    }
+
+    function addMessage(role, content) {
+      const chatLog = document.getElementById('chatLog');
+      const bubble = document.createElement('div');
+      bubble.className = `msg ${role === 'user' ? 'user' : 'bot'}`;
+      bubble.textContent = content;
+      chatLog.appendChild(bubble);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const question = input.value.trim();
+      if (!question) return;
+      addMessage('user', question);
+      addMessage('bot', answerQuestion(question));
+      input.value = '';
+    }
+
+    function renderGraph() {
+      document.getElementById('nodeCount').textContent = `Nodes: ${graph.nodes.length}`;
+      document.getElementById('edgeCount').textContent = `Edges: ${graph.edges.length}`;
+
+      const nodesBody = document.getElementById('nodesTable');
+      const edgesBody = document.getElementById('edgesTable');
+      nodesBody.innerHTML = '';
+      edgesBody.innerHTML = '';
+
+      graph.nodes.forEach((n) => {
+        nodesBody.insertAdjacentHTML('beforeend', `<tr><td>${n.id}</td><td>${n.type}</td></tr>`);
+      });
+      graph.edges.forEach((e) => {
+        edgesBody.insertAdjacentHTML('beforeend', `<tr><td>${e.source}</td><td>${e.relation}</td><td>${e.target}</td></tr>`);
+      });
+    }
+
+    function downloadGraph() {
+      const data = JSON.stringify(graph, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mythology_graph.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    document.getElementById('corpus').value = defaultCorpus;
+    addMessage('bot', 'Hi! Rebuild graph from corpus text and ask your mythology relation question.');
+    rebuildGraph();
+  </script>
+</body>
+</html>

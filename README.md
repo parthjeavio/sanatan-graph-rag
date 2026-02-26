@@ -60,6 +60,32 @@ python graph_rag_pipeline.py \
   --question-entity Hiranyaksha
 ```
 
+
+## Chatbot UI
+
+A simple browser-based chatbot UI is included for question answering over extracted graph relations.
+
+```bash
+python -m http.server 8000
+# then open http://localhost:8000/chatbot_ui.html
+```
+
+### What the UI currently provides
+
+- Paste/edit corpus text and rebuild the graph instantly.
+- Chat interface for relation-style questions (currently supports the sibling/killed-by pattern).
+- A graph snapshot panel with node/edge tables and JSON export.
+
+### Visualization roadmap
+
+The UI includes a concrete visualization plan:
+
+1. Entity Overview (node type counts).
+2. Relation Distribution (edge type counts).
+3. Interactive Graph View (force-directed network).
+4. Path Explorer (multi-hop traversal between selected entities).
+5. Source Traceability (edge-level supporting snippets).
+
 ## Next steps
 
 - Replace regex extraction with an LLM-based extractor constrained by the same ontology.
